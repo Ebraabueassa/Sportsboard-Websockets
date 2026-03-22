@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
+import { wsArcjet } from '../arcjet.js'  // fixed: ./ -> ../
 
 function sendJson(socket, payload) {
     if (socket.readyState !== WebSocket.OPEN) return;
@@ -19,16 +20,33 @@ export function attachWebsocketServer(server) {
         maxPayload: 1024 * 1024
     })
 
-    wss.on('connection', (socket) => {
-        socket.isAlive = true;  // added
-        socket.on('pong', () => { socket.isAlive = true; });  // added
+    wss.on('connection', async (socket, req) => {
+        if (wsArcjet) {
+            try {
+                const decision = await wsArcjet.protect(req);
+
+                if (decision.isDenied()) {
+                    const code = decision.reason.isRateLimit() ? 1013 : 1008;
+                    const reason = decision.reason.isRateLimit() ? 'Rate limit exceeded' : 'Access denied';
+
+                    socket.close(code, reason);
+                    return;
+                }
+            } catch (e) {
+                console.error('WS connection error', e);
+                socket.close(1011, 'Server security error');
+                return;
+            }
+        }
+
+        socket.isAlive = true;
+        socket.on('pong', () => { socket.isAlive = true; });
 
         sendJson(socket, { type: 'welcome' });
 
         socket.on('error', console.error);
     });
 
-    // added: ping every 30s, terminate unresponsive clients
     const interval = setInterval(() => {
         wss.clients.forEach((ws) => {
             if (ws.isAlive === false) return ws.terminate();
@@ -37,7 +55,7 @@ export function attachWebsocketServer(server) {
         });
     }, 30000);
 
-    wss.on('close', () => clearInterval(interval));  // added: cleanup on server close
+    wss.on('close', () => clearInterval(interval));
 
     function broadcastMatchCreated(match) {
         broadcast(wss, { type: 'match_created', data: match });
