@@ -1,15 +1,13 @@
-import { WebSocketServer, WebSocket } from 'ws'  // added WebSocketServer, kept WebSocket
+import { WebSocketServer, WebSocket } from 'ws'
 
-function sendJson(socket, payload) {  // fixed: socker -> socket, sendJason -> sendJson
-    if (socket.readyState !== WebSocket.OPEN) return;  // !== not ==, return not returns
-
+function sendJson(socket, payload) {
+    if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(payload));
 }
 
 function broadcast(wss, payload) {
-    for (const client of wss.clients) {  // of not in
-        if (client.readyState !== WebSocket.OPEN) return;  // !== not ==, return not returns
-
+    for (const client of wss.clients) {
+        if (client.readyState !== WebSocket.OPEN) continue;
         client.send(JSON.stringify(payload));
     }
 }
@@ -22,14 +20,28 @@ export function attachWebsocketServer(server) {
     })
 
     wss.on('connection', (socket) => {
-        sendJson(socket, { type: 'welcome' });  // fixed: sendJason -> sendJson
+        socket.isAlive = true;  // added
+        socket.on('pong', () => { socket.isAlive = true; });  // added
+
+        sendJson(socket, { type: 'welcome' });
 
         socket.on('error', console.error);
-    })  // fixed: closing }) was misplaced
+    });
 
-    function broadcastMatchCreated(match) {  // fixed: Match -> match, removed extra comma
+    // added: ping every 30s, terminate unresponsive clients
+    const interval = setInterval(() => {
+        wss.clients.forEach((ws) => {
+            if (ws.isAlive === false) return ws.terminate();
+            ws.isAlive = false;
+            ws.ping();
+        });
+    }, 30000);
+
+    wss.on('close', () => clearInterval(interval));  // added: cleanup on server close
+
+    function broadcastMatchCreated(match) {
         broadcast(wss, { type: 'match_created', data: match });
     }
 
-    return { broadcastMatchCreated }  // fixed: moved outside wss.on callback
+    return { broadcastMatchCreated }
 }
